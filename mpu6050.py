@@ -1,6 +1,7 @@
 from machine import Pin, I2C
 import utime
- 
+import math
+
 PWR_MGMT_1 = 0x6B
 SMPLRT_DIV = 0x19
 CONFIG = 0x1A
@@ -9,7 +10,7 @@ ACCEL_CONFIG = 0x1C
 TEMP_OUT_H = 0x41
 ACCEL_XOUT_H = 0x3B
 GYRO_XOUT_H = 0x43
- 
+
 def init_mpu6050(i2c, address=0x68):
     i2c.writeto_mem(address, PWR_MGMT_1, b'\x00')
     utime.sleep_ms(100)
@@ -17,7 +18,7 @@ def init_mpu6050(i2c, address=0x68):
     i2c.writeto_mem(address, CONFIG, b'\x00')
     i2c.writeto_mem(address, GYRO_CONFIG, b'\x00')
     i2c.writeto_mem(address, ACCEL_CONFIG, b'\x00')
- 
+
 def read_raw_data(i2c, addr, address=0x68):
     high = i2c.readfrom_mem(address, addr, 1)[0]
     low = i2c.readfrom_mem(address, addr + 1, 1)[0]
@@ -25,7 +26,7 @@ def read_raw_data(i2c, addr, address=0x68):
     if value > 32768:
         value = value - 65536
     return value
- 
+
 def get_mpu6050_data(i2c):
     temp = read_raw_data(i2c, TEMP_OUT_H) / 340.0 + 36.53
     accel_x = read_raw_data(i2c, ACCEL_XOUT_H) / 16384.0
@@ -34,7 +35,7 @@ def get_mpu6050_data(i2c):
     gyro_x = read_raw_data(i2c, GYRO_XOUT_H) / 131.0
     gyro_y = read_raw_data(i2c, GYRO_XOUT_H + 2) / 131.0
     gyro_z = read_raw_data(i2c, GYRO_XOUT_H + 4) / 131.0
- 
+
     return {
         'temp': temp,
         'accel': {
@@ -48,3 +49,12 @@ def get_mpu6050_data(i2c):
             'z': gyro_z,
         }
     }
+
+def calculate_vibration(accel_x, accel_y, accel_z):
+    # Calculate the magnitude of the acceleration vector
+    vibration_magnitude = math.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+    
+    # Subtract 1g (assuming one axis is aligned with gravity)
+    vibration_magnitude = abs(vibration_magnitude - 1.0)
+    
+    return vibration_magnitude

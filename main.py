@@ -24,7 +24,7 @@
 from machine import Pin, I2C,SPI,PWM
 from mpu6050 import init_mpu6050, get_mpu6050_data
 from time import sleep, ticks_ms, ticks_add, ticks_diff
-import bme280  
+from bme280 import BME280 
 import sdcard
 import uos
 import math
@@ -82,11 +82,11 @@ spi = SPI(1,
     miso=Pin(12))
  
 # Initialize SD card
-sd = sdcard.SDCard(spi,cs)
+# sd = sdcard.SDCard(spi,cs)
  
 # Mount filesystem
-vfs = uos.VfsFat(sd)
-uos.mount(vfs, "/sd")
+# vfs = uos.VfsFat(sd)
+# uos.mount(vfs, "/sd")
 
 #Component declaration
 
@@ -129,7 +129,7 @@ init_mpu6050(mpu)
 
 #bme initialization
 i2c=I2C(1,sda=Pin(bme['sda']), scl=Pin(bme['scl']), freq=400000)
-bme = bme280.BME280(i2c=i2c)  
+bme_sensor = BME280(i2c=i2c)  
 
 #button initialization
 button = Pin(components['button'], Pin.IN,Pin.PULL_UP)
@@ -265,46 +265,39 @@ def collect_data():
             boot_down()
             # Button is pressed, stop data collection
             break
-        
-        print(bme.values)
 
-        #mpu data reading
+       # BME280 data reading (now using low-pass filtered values)
+        temp, pressure, humidity = bme_sensor.read_compensated_data()
+        temp = temp / 100  # Convert to degrees Celsius
+        pressure = pressure / 256 / 100  # Convert to hPa
+        humidity = humidity / 1024  # Convert to percentage
+
+        # MPU6050 data reading (without low-pass filter)
         mpu6050 = get_mpu6050_data(mpu)
-        gyro_x_raw, gyro_y_raw, gyro_z_raw = mpu6050['gyro']['x'], mpu6050['gyro']['y'], mpu6050['gyro']['z']
-        accel_x_raw, accel_y_raw, accel_z_raw = mpu6050['accel']['x'], mpu6050['accel']['y'], mpu6050['accel']['z']
-        # Apply low-pass filter to accelerometer readings
-        alpha = 0.5
-        filtered_accel_x = alpha * filtered_accel_x + (1 - alpha) * accel_x_raw
-        filtered_accel_y = alpha * filtered_accel_y + (1 - alpha) * accel_y_raw
-        filtered_accel_z = alpha * filtered_accel_z + (1 - alpha) * accel_z_raw
-        # Apply low-pass filter to gyro readings
-        filtered_gyro_x = alpha * filtered_gyro_x + (1 - alpha) * gyro_x_raw
-        filtered_gyro_y = alpha * filtered_gyro_y + (1 - alpha) * gyro_y_raw
-        filtered_gyro_z = alpha * filtered_gyro_z + (1 - alpha) * gyro_z_raw
+        accel_x, accel_y, accel_z = mpu6050['accel']['x'], mpu6050['accel']['y'], mpu6050['accel']['z']
+        gyro_x, gyro_y, gyro_z = mpu6050['gyro']['x'], mpu6050['gyro']['y'], mpu6050['gyro']['z']
 
-        #Environemnt data
-        temp = (float(bme.values[0][:-1]) + float(mpu6050['temp']))/2
-        hum = float(bme.values[2][:-1])
-        pres = float(bme.values[1][:-3])
-        # Example gravitational acceleration components (should be measured or obtained from specifications)
-        gravity_x = 0.0  # Example gravitational acceleration component along X-axis
-        gravity_y = 0.0  # Example gravitational acceleration component along Y-axis
-        gravity_z = 9.8  # Example gravitational acceleration component along Z-axis
-        
         # Calculate vibration magnitude
-        vibration_magnitude = calculate_vibration(filtered_accel_x, filtered_accel_y, filtered_accel_z, gravity_x, gravity_y, gravity_z)
+        gravity_x, gravity_y, gravity_z = 0.0, 0.0, 9.8
+        vibration_magnitude = calculate_vibration(accel_x, accel_y, accel_z, gravity_x, gravity_y, gravity_z)
 
-        pattern = f"{temp},{hum},{pres},{filtered_accel_x},{filtered_accel_y},{filtered_accel_z},{filtered_gyro_x},{filtered_gyro_y},{filtered_gyro_z},{vibration_magnitude}\n"
-        pattern = f"{filtered_accel_x},{filtered_accel_y},{filtered_accel_z},{filtered_gyro_x},{filtered_gyro_y},{filtered_gyro_z},{vibration_magnitude}\n"
-        print("\n",pattern)
-        print(f"x:{filtered_gyro_x},y:{filtered_gyro_y},z:{filtered_gyro_z}")
-        with open("/sd/test01.txt", "w") as file:
-            file.write(f"{pattern}")
-        Objectname.write(pattern)
-        Objectname.flush()
-        print("Temperature: {:.2f} °C".format(mpu6050['temp']))
-        print("Acceleration: X: {:.2f}, Y: {:.2f}, Z: {:.2f} g".format(mpu6050['accel']['x'], mpu6050['accel']['y'], mpu6050['accel']['z']))
-        print("Gyroscope: X: {:.2f}, Y: {:.2f}, Z: {:.2f} °/s".format(mpu6050['gyro']['x'],mpu6050['gyro']['y'], mpu6050['gyro']['z']))
+        pattern = f"{temp:.2f},{humidity:.2f},{pressure:.2f},{accel_x:.2f},{accel_y:.2f},{accel_z:.2f},{gyro_x:.2f},{gyro_y:.2f},{gyro_z:.2f},{vibration_magnitude:.2f}\n"
+        print("\n", pattern)
+        
+        # with open("/sd/test01.txt", "w") as file:
+        #     file.write(f"{pattern}")
+        # Objectname.write(pattern)
+        # Objectname.flush()
+        
+        print("Temperature: {:.2f} °C".format(temp))
+        print("Humidity: {:.2f} %".format(humidity))
+        print("Pressure: {:.2f} hPa".format(pressure))
+        print("Acceleration: X: {:.2f}, Y: {:.2f}, Z: {:.2f} g".format(accel_x, accel_y, accel_z))
+        print("Gyroscope: X: {:.2f}, Y: {:.2f}, Z: {:.2f} °/s".format(gyro_x, gyro_y, gyro_z))
+        print("Vibration Magnitude: {:.2f}".format(vibration_magnitude))
+        
+        sleep(0.1)  # Adjust the delay as needed
+
         
         
 def boot_down():

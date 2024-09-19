@@ -35,23 +35,21 @@
 import time
 from ustruct import unpack, unpack_from
 from array import array
- 
+
 # BME280 default address.
 BME280_I2CADDR = 0x76
- 
+
 # Operating Modes
 BME280_OSAMPLE_1 = 1
 BME280_OSAMPLE_2 = 2
 BME280_OSAMPLE_4 = 3
 BME280_OSAMPLE_8 = 4
 BME280_OSAMPLE_16 = 5
- 
+
 BME280_REGISTER_CONTROL_HUM = 0xF2
 BME280_REGISTER_CONTROL = 0xF4
- 
- 
+
 class BME280:
- 
     def __init__(self,
                  mode=BME280_OSAMPLE_1,
                  address=BME280_I2CADDR,
@@ -69,7 +67,7 @@ class BME280:
         if i2c is None:
             raise ValueError('An I2C object is required.')
         self.i2c = i2c
- 
+
         # load calibration data
         dig_88_a1 = self.i2c.readfrom_mem(self.address, 0x88, 26)
         dig_e1_e7 = self.i2c.readfrom_mem(self.address, 0xE1, 7)
@@ -77,24 +75,39 @@ class BME280:
             self.dig_P2, self.dig_P3, self.dig_P4, self.dig_P5, \
             self.dig_P6, self.dig_P7, self.dig_P8, self.dig_P9, \
             _, self.dig_H1 = unpack("<HhhHhhhhhhhhBB", dig_88_a1)
- 
+
         self.dig_H2, self.dig_H3 = unpack("<hB", dig_e1_e7)
         e4_sign = unpack_from("<b", dig_e1_e7, 3)[0]
         self.dig_H4 = (e4_sign << 4) | (dig_e1_e7[4] & 0xF)
- 
+
         e6_sign = unpack_from("<b", dig_e1_e7, 5)[0]
         self.dig_H5 = (e6_sign << 4) | (dig_e1_e7[4] >> 4)
- 
+
         self.dig_H6 = unpack_from("<b", dig_e1_e7, 6)[0]
- 
+
+        # Check that the calibration data is valid
+        if self.dig_T1 is None or self.dig_T2 is None or self.dig_T3 is None:
+            raise ValueError("Invalid temperature calibration data")
+        if self.dig_P1 is None or self.dig_P2 is None or self.dig_P3 is None or self.dig_P4 is None or self.dig_P5 is None or self.dig_P6 is None or self.dig_P7 is None or self.dig_P8 is None or self.dig_P9 is None:
+            raise ValueError("Invalid pressure calibration data")
+        if self.dig_H1 is None or self.dig_H2 is None or self.dig_H3 is None or self.dig_H4 is None or self.dig_H5 is None or self.dig_H6 is None:
+            raise ValueError("Invalid humidity calibration data")
+
         self.i2c.writeto_mem(self.address, BME280_REGISTER_CONTROL,
                              bytearray([0x3F]))
         self.t_fine = 0
- 
+
         # temporary data holders which stay allocated
         self._l1_barray = bytearray(1)
         self._l8_barray = bytearray(8)
         self._l3_resultarray = array("i", [0, 0, 0])
+
+        # Add these lines for the low-pass filter
+        self.alpha = 0.5  # Filter coefficient
+        self.filtered_temp = None
+        self.filtered_pressure = None
+        self.filtered_humidity = None
+
  
     def read_raw_data(self, result):
         """ Reads the raw (uncompensated) data from the sensor.
@@ -182,13 +195,29 @@ class BME280:
         h = 419430400 if h > 419430400 else h
         humidity = h >> 12
  
+        # Apply low-pass filter
+        if self.filtered_temp is None:
+            self.filtered_temp = temp
+        else:
+            self.filtered_temp = self.alpha * temp + (1 - self.alpha) * self.filtered_temp
+
+        if self.filtered_pressure is None:
+            self.filtered_pressure = pressure
+        else:
+            self.filtered_pressure = self.alpha * pressure + (1 - self.alpha) * self.filtered_pressure
+
+        if self.filtered_humidity is None:
+            self.filtered_humidity = humidity
+        else:
+            self.filtered_humidity = self.alpha * humidity + (1 - self.alpha) * self.filtered_humidity
+
         if result:
-            result[0] = temp
-            result[1] = pressure
-            result[2] = humidity
+            result[0] = self.filtered_temp
+            result[1] = self.filtered_pressure
+            result[2] = self.filtered_humidity
             return result
  
-        return array("i", (temp, pressure, humidity))
+        return array("i", (int(self.filtered_temp), int(self.filtered_pressure), int(self.filtered_humidity)))
  
     @property
     def values(self):
